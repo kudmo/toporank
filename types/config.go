@@ -1,20 +1,33 @@
 package types
 
-// RandomWalkConfig contains tunable parameters for the random-walk based
-// ranking algorithm used by TopoRank.
-type RandomWalkConfig struct {
-	// MaxIter is the maximum number of iterations to run the walker.
-	MaxIter int
+// TopoRankConfig contains configurable parameters for the TopoRank algorithm.
+// These parameters control both the topological potential calculation and
+// the personalized PageRank execution.
+type TopoRankConfig struct {
+	// ImpactFactor (σ) controls the distance decay in topological potential.
+	// Larger values mean influence propagates further through the graph.
+	ImpactFactor float64
 
-	// SelfRetention controls how much score a node retains between iterations
-	// (value in [0,1]). A typical value is 0.15.
-	SelfRetention float64
+	// DampingFactor is the standard PageRank damping parameter.
+	// Typically set to 0.85, it controls the probability of following edges
+	// vs. teleporting according to the preference vector.
+	DampingFactor float64
 
-	// ConvergenceTol is the threshold for the total L1 change across all
-	// node scores below which the algorithm will stop early.
-	ConvergenceTol float64
+	// MaxIterations limits the number of PageRank iterations.
+	MaxIterations int
 
-	// Sigma is a distance decay scale used when computing topological
-	// potentials.
-	Sigma float64
+	// Tolerance determines convergence - iterations stop when the total
+	// L1 change in ranks is below this threshold.
+	Tolerance float64
+}
+
+// DefaultConfig returns a TopoRankConfig with recommended default values.
+// These values work well for most microservice anomaly detection scenarios.
+func DefaultConfig() TopoRankConfig {
+	return TopoRankConfig{
+		ImpactFactor:  1.0,
+		DampingFactor: 0.85,
+		MaxIterations: 100,
+		Tolerance:     1e-6,
+	}
 }

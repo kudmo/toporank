@@ -1,95 +1,76 @@
+// Package api provides the public interface for the TopoRank algorithm.
+// It exposes a simple, functional API that takes a correlation graph and
+// configuration, then returns ranked nodes.
 package api
 
 import (
-	"math"
 	"sort"
 
-	"github.com/kudmo/toporank/internal/potentials"
+	"github.com/kudmo/toporank/internal/graph"
+	"github.com/kudmo/toporank/internal/pagerank"
+	"github.com/kudmo/toporank/internal/potential"
 	"github.com/kudmo/toporank/types"
 )
 
-// RunTopoRank executes the TopoRank algorithm on graph g using the supplied
-// configuration and optional anomaly potentials. The function updates node
-// scores in-place and returns a slice of nodes ordered by descending score.
+// RunTopoRank executes the TopoRank algorithm on a pre-computed correlation graph.
+// The algorithm follows these steps:
+//  1. Compute topological potential for each node (preference vector u)
+//  2. Normalize the preference vector
+//  3. Build transition matrix P from graph edge weights
+//  4. Run personalized PageRank with preference vector u and matrix P
+//  5. Return nodes sorted by descending rank
 //
 // Parameters:
-//   - g: the graph to rank (nodes should be present in g.Nodes)
-//   - config: walker configuration controlling iterations, retention and sigma
-//   - anomalyPotentials: optional initial score overrides for specific nodes
-func RunTopoRank(g *types.Graph, config types.RandomWalkConfig, anomalyPotentials map[string]float64) []*types.Node {
-	// 1. Initialize node scores from anomaly potentials when provided.
-	for id, val := range anomalyPotentials {
+//   - g: A weighted directed graph with node anomaly scores and edge correlations
+//   - config: Algorithm parameters (impact factor, damping factor, etc.)
+//
+// Returns:
+//
+//	A slice of nodes sorted by descending TopoRank score.
+//	The nodes themselves are modified to store their computed Preference and Rank.
+func RunTopoRank(g *types.CorrelationGraph, config types.TopoRankConfig) []*types.Node {
+	// Use default config if none provided
+	if config == (types.TopoRankConfig{}) {
+		config = types.DefaultConfig()
+	}
+
+	// Step 1: Compute topological potential (preference vector u)
+	// This implements Algorithm 2, lines 2-10
+	preferences := potential.ComputeTopologicalPotential(g, config)
+
+	// Step 2: Normalize preference vector for PageRank
+	normalizedPrefs := potential.NormalizePreferenceVector(preferences)
+
+	// Store preference scores in nodes for debugging/analysis
+	for id, pref := range preferences {
 		if node, ok := g.Nodes[id]; ok {
-			node.Score = val
+			node.Preference = pref
 		}
 	}
 
-	// 2. Compute topological potential used as neighbor weighting.
-	tPot := potentials.ComputeTopologicalPotential(g, config.Sigma)
+	// Step 3: Build transition matrix P from weighted edges
+	// This corresponds to the correlation-based transition probabilities
+	transitionMatrix := graph.BuildTransitionMatrix(g)
 
-	// 3. Random-walk style score propagation.
-	for iter := 0; iter < config.MaxIter; iter++ {
-		diff := 0.0
-		newScores := make(map[string]float64)
+	// Step 4: Run personalized PageRank (Algorithm 2, line 17)
+	ranks := pagerank.PageRank(g, transitionMatrix, normalizedPrefs, config)
 
-		for id, node := range g.Nodes {
-			share := node.Score * (1 - config.SelfRetention)
-			neighbors := node.Neighbors
-			weightSum := 0.0
-			weights := make([]float64, len(neighbors))
-
-			// Distribute `share` among neighbors proportionally to their
-			// topological potential.
-			for i, nbrID := range neighbors {
-				w := tPot[nbrID]
-				weights[i] = w
-				weightSum += w
-			}
-
-			for i, nbrID := range neighbors {
-				if weightSum > 0 {
-					newScores[nbrID] += share * (weights[i] / weightSum)
-				} else {
-					// If no neighbors or zero total weight, keep share on node.
-					newScores[id] += share
-				}
-			}
-
-			// Add retained self-score.
-			newScores[id] += node.Score * config.SelfRetention
-		}
-
-		// 4. Check convergence by total L1 change and commit new scores.
-		for id, node := range g.Nodes {
-			d := math.Abs(newScores[id] - node.Score)
-			diff += d
-			node.Score = newScores[id]
-		}
-
-		if diff < config.ConvergenceTol {
-			break
+	// Store final ranks in nodes
+	for id, rank := range ranks {
+		if node, ok := g.Nodes[id]; ok {
+			node.Rank = rank
 		}
 	}
 
-	// 5. Normalize scores to sum to 1.
-	total := 0.0
+	// Step 5: Sort nodes by descending rank (Algorithm 2, line 18)
+	result := make([]*types.Node, 0, len(g.Nodes))
 	for _, node := range g.Nodes {
-		total += node.Score
-	}
-	if total > 0 {
-		for _, node := range g.Nodes {
-			node.Score /= total
-		}
+		result = append(result, node)
 	}
 
-	// 6. Collect and sort nodes by score descending.
-	nodes := make([]*types.Node, 0, len(g.Nodes))
-	for _, node := range g.Nodes {
-		nodes = append(nodes, node)
-	}
-	sort.Slice(nodes, func(i, j int) bool {
-		return nodes[i].Score > nodes[j].Score
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Rank > result[j].Rank
 	})
 
-	return nodes
+	return result
 }
