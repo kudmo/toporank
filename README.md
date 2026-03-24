@@ -150,7 +150,6 @@ toporank/
 
 - Go 1.21 or higher
 - Input graph must be directed with weighted edges (0-1)
-- Node anomaly scores should be in range [0, 1]
 
 ### License
 
